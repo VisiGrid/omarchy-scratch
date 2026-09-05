@@ -61,6 +61,23 @@ hl.layer_rule({ match = { namespace = "visigrid-scratch" }, animation = "slide t
 
 Formulas start with `=`. Mouse: click selects, double-click edits, wheel scrolls.
 
+### Vim mode
+
+Set `"vim": true` in the settings file (below). The bindings mirror VisiGrid's
+own vim mode:
+
+| Key | Action |
+|-----|--------|
+| `h` `j` `k` `l` | move |
+| `0` / `$` | first column / last filled column in the row |
+| `w` / `b` | next / previous filled cell in the row |
+| `gg` / `G` | top-left / last filled row |
+| `i` / `a` | edit with the cursor at the start / end |
+| `x` | clear the cell |
+
+Digits, `=`, `+`, `-` and `.` still start an edit directly, so `2+2` never
+needs an `i` first. Other letters are ignored in normal mode.
+
 The sheet lives at `~/.local/state/visigrid/scratch.sheet`. It is a normal
 VisiGrid file: open it in the app, share it, or `vgrid peek` it from a terminal.
 
@@ -73,7 +90,8 @@ Optional settings file at `~/.config/visigrid/scratch.json` (hot-reloads):
   "theme": "phosphor",
   "rows": 15,
   "cols": 0,
-  "font": ""
+  "font": "",
+  "vim": false
 }
 ```
 
@@ -83,6 +101,7 @@ Optional settings file at `~/.config/visigrid/scratch.json` (hot-reloads):
 - `cols`: fixed column count (3–26), or `0` to fit as many 128px columns as
   the screen holds.
 - `font`: font family override; empty uses the shell's menu font.
+- `vim`: `true` enables the vim bindings above.
 
 ## How it works
 

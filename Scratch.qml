@@ -28,6 +28,8 @@ Item {
   property int colsSetting: 0             // 0 = fill the screen width
   readonly property int cols: colsSetting > 0 ? colsSetting : Math.max(3, Math.floor((panel.width - headW) / baseCellW))
   property string fontOverride: ""
+  property bool vimMode: false
+  property string pendingKey: ""          // "g" while waiting for the second g
 
   // ---- engine -------------------------------------------------------------
   readonly property string token: Grid.randomToken()
@@ -116,6 +118,7 @@ Item {
     try { s = JSON.parse(raw) || {} } catch (e) { s = {} }
     root.themeName = s.theme === "system" ? "system" : "phosphor"
     root.fontOverride = typeof s.font === "string" ? s.font : ""
+    root.vimMode = s.vim === true
     var r = parseInt(s.rows), c = parseInt(s.cols)
     root.rows = isFinite(r) ? Math.max(5, Math.min(60, r)) : 15
     root.colsSetting = isFinite(c) && c > 0 ? Math.max(3, Math.min(26, c)) : 0
@@ -257,11 +260,10 @@ Item {
   }
 
   // ---- editing ---------------------------------------------------------------------------
-  function beginEdit(initial, selectAll) {
+  function beginEdit(initial, atStart) {
     root.editing = true
     editor.text = initial
-    if (selectAll) editor.selectAll()
-    else editor.cursorPosition = editor.text.length
+    editor.cursorPosition = atStart ? 0 : editor.text.length
     Qt.callLater(function() { editor.forceActiveFocus() })
   }
 
@@ -325,9 +327,62 @@ Item {
     return root.engineState
   }
 
+  // ---- vim mode (mirrors VisiGrid's optional vim bindings) ----------------
+  function rowFilled(rr) {
+    var row = root.grid[rr]
+    if (!row) return false
+    for (var c = 0; c < row.length; c++) if (row[c].raw !== "") return true
+    return false
+  }
+
+  function vimKey(event) {
+    var text = event.text || ""
+    var pending = root.pendingKey
+    root.pendingKey = ""
+    var rr = root.activeRow - root.topRow, cc = root.activeCol - root.leftCol
+    var row = root.grid[rr] || []
+    var c
+    switch (text) {
+    case "h": root.move(0, -1); return true
+    case "j": root.move(1, 0); return true
+    case "k": root.move(-1, 0); return true
+    case "l": root.move(0, 1); return true
+    case "0": root.select(root.activeRow, 0); return true
+    case "$":
+      for (c = row.length - 1; c >= 0; c--) if (row[c].raw !== "") { root.select(root.activeRow, root.leftCol + c); break }
+      return true
+    case "w":
+      for (c = cc + 1; c < row.length; c++) if (row[c].raw !== "") { root.select(root.activeRow, root.leftCol + c); break }
+      return true
+    case "b":
+      for (c = cc - 1; c >= 0; c--) if (row[c].raw !== "") { root.select(root.activeRow, root.leftCol + c); break }
+      return true
+    case "g":
+      if (pending === "g") root.select(0, 0)
+      else root.pendingKey = "g"
+      return true
+    case "G":
+      for (var r = root.rows - 1; r >= 0; r--) if (root.rowFilled(r)) { root.select(root.topRow + r, root.activeCol); break }
+      return true
+    case "i": root.beginEdit(root.activeCell().raw, true); return true
+    case "a": root.beginEdit(root.activeCell().raw, false); return true
+    case "x": root.clearCell(); return true
+    }
+    // Numbers and formula starters still type straight in: it is a calculator first.
+    if (text.length === 1 && /[0-9=.+\-]/.test(text)) { root.beginEdit(text, false); return true }
+    // Swallow other letters so a stray key never starts an edit in normal mode.
+    return text.length === 1 && text.charCodeAt(0) >= 32
+  }
+
   function handleKey(event) {
     var ctrl = event.modifiers & Qt.ControlModifier
     var shift = event.modifiers & Qt.ShiftModifier
+    if (root.vimMode && !ctrl && event.text && event.text.length === 1 && event.key !== Qt.Key_Escape
+        && event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter && event.key !== Qt.Key_Tab
+        && event.key !== Qt.Key_Backspace && event.key !== Qt.Key_Delete) {
+      if (root.vimKey(event)) return true
+    }
+    root.pendingKey = ""
     switch (event.key) {
     case Qt.Key_Escape: root.close(); return true
     case Qt.Key_Left: root.move(0, -1); return true
@@ -694,7 +749,9 @@ Item {
             anchors.left: parent.left
             anchors.leftMargin: root.edgePad
             anchors.verticalCenter: parent.verticalCenter
-            text: "Enter ↓  Tab →  F2 edit  Del clear  ^C copy  ^O open in VisiGrid  Esc close"
+            text: root.vimMode
+              ? "hjkl move  i/a edit  x clear  w/b next/prev  0/$ row ends  gg/G top/bottom  ^C copy  ^O open in VisiGrid  Esc close"
+              : "Enter ↓  Tab →  F2 edit  Del clear  ^C copy  ^O open in VisiGrid  Esc close"
             color: root.fgDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

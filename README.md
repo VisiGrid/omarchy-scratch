@@ -55,12 +55,18 @@ hl.layer_rule({ match = { namespace = "visigrid-scratch" }, animation = "slide t
 | `Tab` / `Shift+Tab` | commit and move right / left |
 | arrows, `PgUp`, `PgDn`, `Home`, `Ctrl+Home` | move; the grid scrolls when you hit an edge |
 | `Delete` / `Backspace` | clear the active cell |
+| `Alt+=` | AutoSum: `=SUM()` over the numbers above, else to the left |
 | `Ctrl+C` / `Ctrl+Shift+C` | copy the cell's value / its formula |
 | `Ctrl+O` | save and open the sheet in the VisiGrid app |
 | `F11` | toggle between full width and a fitted sheet |
 | `Esc` | cancel the edit, or close the overlay |
 
 Formulas start with `=`. Mouse: click selects, double-click edits, wheel scrolls.
+
+While typing a formula, arrow keys pick cell references instead of moving the
+caret: after `=`, an operator, `(` or `,`, press an arrow to start pointing,
+keep pressing to move, hold `Shift` to extend to a range, then type the next
+operator or `Enter`. Clicking a cell does the same.
 
 ### Vim mode
 

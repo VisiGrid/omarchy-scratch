@@ -56,6 +56,14 @@ Item {
   property string inflightOps: ""
   property bool inspectDirty: false
   property string inflightRange: ""
+  // Point mode: picking cell references into a formula with arrows or the mouse.
+  property bool pointing: false
+  property int pointAnchorRow: 0
+  property int pointAnchorCol: 0
+  property int pointRow: 0
+  property int pointCol: 0
+  property int refPos: 0                  // where the live reference starts in the editor text
+  property int refLen: 0
   property int inflightRows: 0
   property int inflightCols: 0
   readonly property int maxRows: 65536
@@ -293,6 +301,7 @@ Item {
 
   function cancelEdit() {
     root.editing = false
+    root.pointing = false
     editor.text = ""
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
@@ -300,10 +309,92 @@ Item {
   function commitEdit(dr, dc) {
     var text = editor.text
     root.editing = false
+    root.pointing = false
     editor.text = ""
     root.writeCell(root.activeRow, root.activeCol, text)
     root.move(dr, dc)
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
+  }
+
+  // ---- point mode + AutoSum ---------------------------------------------------------
+  function formulaEditing() {
+    return root.editing && editor.text.charAt(0) === "="
+  }
+
+  // A reference may be inserted where the formula expects an operand.
+  function operandExpectedAt(text, pos) {
+    if (pos <= 0) return false
+    return "=(+-*/,;<>^&:".indexOf(text.charAt(pos - 1)) !== -1
+  }
+
+  function clampRowToView(r) { return Math.max(root.topRow, Math.min(root.topRow + root.rows - 1, r)) }
+  function clampColToView(c) { return Math.max(root.leftCol, Math.min(root.leftCol + root.cols - 1, c)) }
+
+  function pointRefText() {
+    var r0 = Math.min(root.pointAnchorRow, root.pointRow), r1 = Math.max(root.pointAnchorRow, root.pointRow)
+    var c0 = Math.min(root.pointAnchorCol, root.pointCol), c1 = Math.max(root.pointAnchorCol, root.pointCol)
+    return (r0 === r1 && c0 === c1) ? Grid.cellRef(r0, c0) : Grid.cellRef(r0, c0) + ":" + Grid.cellRef(r1, c1)
+  }
+
+  function pointUpdate() {
+    var t = editor.text, ref = root.pointRefText()
+    editor.text = t.substring(0, root.refPos) + ref + t.substring(root.refPos + root.refLen)
+    root.refLen = ref.length
+    editor.cursorPosition = root.refPos + root.refLen
+  }
+
+  // Begin pointing at (r, c); the reference goes in at the caret.
+  function pointBegin(r, c) {
+    root.pointing = true
+    root.refPos = editor.cursorPosition
+    root.refLen = 0
+    root.pointAnchorRow = root.pointRow = root.clampRowToView(r)
+    root.pointAnchorCol = root.pointCol = root.clampColToView(c)
+    root.pointUpdate()
+  }
+
+  function pointMove(dr, dc, extend) {
+    root.pointRow = root.clampRowToView(root.pointRow + dr)
+    root.pointCol = root.clampColToView(root.pointCol + dc)
+    if (!extend) { root.pointAnchorRow = root.pointRow; root.pointAnchorCol = root.pointCol }
+    root.pointUpdate()
+  }
+
+  // Arrow key while editing a formula. Returns true if it was consumed.
+  function pointArrow(dr, dc, extend) {
+    if (!root.formulaEditing()) return false
+    if (root.pointing) { root.pointMove(dr, dc, extend); return true }
+    if (!root.operandExpectedAt(editor.text, editor.cursorPosition)) return false
+    root.pointBegin(root.activeRow + dr, root.activeCol + dc)
+    return true
+  }
+
+  // Mouse click on a cell while editing a formula. Returns true if consumed.
+  function pointClick(r, c) {
+    if (!root.formulaEditing()) return false
+    if (!root.pointing && !root.operandExpectedAt(editor.text, editor.cursorPosition)) return false
+    if (root.pointing) { root.pointAnchorRow = root.pointRow = r; root.pointAnchorCol = root.pointCol = c; root.pointUpdate() }
+    else root.pointBegin(r, c)
+    editor.forceActiveFocus()
+    return true
+  }
+
+  // Alt+=: =SUM() over the numbers directly above, else directly to the left.
+  function autoSum() {
+    if (root.editing) return
+    var rr = root.activeRow - root.topRow, cc = root.activeCol - root.leftCol
+    var r = rr - 1
+    while (r >= 0 && Grid.isNumeric(root.cellAt(r, cc).display)) r--
+    var range = ""
+    if (rr - 1 - r >= 1) {
+      range = Grid.cellRef(root.topRow + r + 1, root.activeCol) + ":" + Grid.cellRef(root.activeRow - 1, root.activeCol)
+    } else {
+      var c = cc - 1
+      while (c >= 0 && Grid.isNumeric(root.cellAt(rr, c).display)) c--
+      if (cc - 1 - c >= 1) range = Grid.cellRef(root.activeRow, root.leftCol + c + 1) + ":" + Grid.cellRef(root.activeRow, root.activeCol - 1)
+    }
+    root.beginEdit("=SUM(" + range + ")", false)
+    if (range === "") Qt.callLater(function() { editor.cursorPosition = 5 })
   }
 
   // ---- navigation -------------------------------------------------------------------
@@ -401,6 +492,7 @@ Item {
   function handleKey(event) {
     var ctrl = event.modifiers & Qt.ControlModifier
     var shift = event.modifiers & Qt.ShiftModifier
+    if ((event.modifiers & Qt.AltModifier) && (event.key === Qt.Key_Equal || event.text === "=")) { root.autoSum(); return true }
     if (root.vimMode && !ctrl && event.text && event.text.length === 1 && event.key !== Qt.Key_Escape
         && event.key !== Qt.Key_Return && event.key !== Qt.Key_Enter && event.key !== Qt.Key_Tab
         && event.key !== Qt.Key_Backspace && event.key !== Qt.Key_Delete) {
@@ -709,6 +801,7 @@ Item {
                     MouseArea {
                       anchors.fill: parent
                       onClicked: {
+                        if (root.pointClick(root.topRow + rowItem.index, root.leftCol + cellItem.index)) return
                         if (root.editing) root.commitEdit(0, 0)
                         root.select(root.topRow + rowItem.index, root.leftCol + cellItem.index)
                         keyCatcher.forceActiveFocus()
@@ -722,6 +815,19 @@ Item {
                 }
               }
             }
+          }
+
+          // Outline of the reference being picked in point mode.
+          Rectangle {
+            visible: root.pointing
+            x: root.headW + (Math.min(root.pointAnchorCol, root.pointCol) - root.leftCol) * root.cellW
+            y: root.cellH + (Math.min(root.pointAnchorRow, root.pointRow) - root.topRow) * root.cellH
+            width: (Math.abs(root.pointCol - root.pointAnchorCol) + 1) * root.cellW
+            height: (Math.abs(root.pointRow - root.pointAnchorRow) + 1) * root.cellH
+            color: Util.alpha(root.fgBright, 0.12)
+            border.color: root.fgBright
+            border.width: 2
+            z: 4
           }
 
           // In-cell editor, floated over the active cell.
@@ -758,9 +864,13 @@ Item {
                 case Qt.Key_Enter: root.commitEdit(shift ? -1 : 1, 0); event.accepted = true; return
                 case Qt.Key_Tab: root.commitEdit(0, 1); event.accepted = true; return
                 case Qt.Key_Backtab: root.commitEdit(0, -1); event.accepted = true; return
-                case Qt.Key_Up: root.commitEdit(-1, 0); event.accepted = true; return
-                case Qt.Key_Down: root.commitEdit(1, 0); event.accepted = true; return
+                case Qt.Key_Up: if (root.pointArrow(-1, 0, shift)) { event.accepted = true; return } root.commitEdit(-1, 0); event.accepted = true; return
+                case Qt.Key_Down: if (root.pointArrow(1, 0, shift)) { event.accepted = true; return } root.commitEdit(1, 0); event.accepted = true; return
+                case Qt.Key_Left: if (root.pointArrow(0, -1, shift)) { event.accepted = true; return } break
+                case Qt.Key_Right: if (root.pointArrow(0, 1, shift)) { event.accepted = true; return } break
                 }
+                // Any other key locks the picked reference in and resumes typing.
+                if (root.pointing && event.key !== Qt.Key_Shift) root.pointing = false
               }
             }
           }
@@ -776,7 +886,7 @@ Item {
             anchors.verticalCenter: parent.verticalCenter
             text: root.vimMode
               ? "hjkl move  i/a edit  x clear  w/b  0/$  gg/G  ^C copy  ^O VisiGrid  F11 width  Esc close"
-              : "Enter ↓  Tab →  F2 edit  Del clear  ^C copy  ^O VisiGrid  F11 width  Esc close"
+              : "Enter ↓  Tab →  F2 edit  Alt+= sum  Del clear  ^C copy  ^O VisiGrid  F11 width  Esc close"
             color: root.fgDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

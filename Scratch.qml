@@ -31,7 +31,9 @@ Item {
   readonly property string widthMode: widthOverride || widthSetting
   readonly property int cols: colsSetting > 0 ? colsSetting : Math.max(3, Math.floor((cardW - headW) / baseCellW))
   property string fontOverride: ""
-  property bool vimMode: false
+  property bool vimSetting: false
+  property int vimOverride: -1            // F12 toggles for this session: -1 follow setting, 0 off, 1 on
+  readonly property bool vimMode: vimOverride === -1 ? vimSetting : vimOverride === 1
   property string pendingKey: ""          // "g" while waiting for the second g
 
   // ---- engine -------------------------------------------------------------
@@ -139,7 +141,8 @@ Item {
     try { s = JSON.parse(raw) || {} } catch (e) { s = {} }
     root.themeName = s.theme === "system" ? "system" : "phosphor"
     root.fontOverride = typeof s.font === "string" ? s.font : ""
-    root.vimMode = s.vim === true
+    root.vimSetting = s.vim === true
+    root.vimOverride = -1
     var r = parseInt(s.rows), c = parseInt(s.cols)
     root.rows = isFinite(r) ? Math.max(5, Math.min(60, r)) : 15
     root.colsSetting = isFinite(c) && c > 0 ? Math.max(3, Math.min(26, c)) : 0
@@ -157,15 +160,17 @@ Item {
 
   // ---- engine lifecycle -----------------------------------------------------------
   // An empty or unreadable sheet (interrupted save) is moved aside, never fatal.
+  // The engine is exec'd so it is the process the shell tracks and signals:
+  // stopping it (Ctrl+O, shell exit via pdeathsig) must reach vgrid itself,
+  // never a wrapper that would leave the engine orphaned holding the file.
   readonly property string engineScript:
     'mkdir -p "$(dirname "$1")"\n' +
     'command -v vgrid >/dev/null 2>&1 || { echo "MISSING vgrid"; exit 127; }\n' +
-    'if [ -s "$1" ]; then\n' +
-    '  vgrid serve "$1" --autosave 5 --title Scratch; rc=$?\n' +
-    '  [ "$rc" -eq 3 ] || exit "$rc"\n' +
+    'if [ -e "$1" ] && ! vgrid peek "$1" >/dev/null 2>&1; then\n' +
     '  mv -f "$1" "$1.unreadable-$(date +%s)"\n' +
     '  echo "RECOVER moved unreadable sheet aside"\n' +
     'fi\n' +
+    'if [ -s "$1" ]; then exec vgrid serve "$1" --autosave 5 --title Scratch; fi\n' +
     'rm -f "$1"\n' +
     'exec vgrid serve --new --save-as "$1" --autosave 5 --title Scratch\n'
 
@@ -516,6 +521,7 @@ Item {
       return true
     case Qt.Key_F2: root.beginEdit(root.activeCell().raw, false); return true
     case Qt.Key_F11: root.widthOverride = root.widthMode === "full" ? "fit" : "full"; return true
+    case Qt.Key_F12: root.vimOverride = root.vimMode ? 0 : 1; root.pendingKey = ""; return true
     case Qt.Key_Delete:
     case Qt.Key_Backspace: root.clearCell(); return true
     }
@@ -885,8 +891,8 @@ Item {
             anchors.leftMargin: root.edgePad
             anchors.verticalCenter: parent.verticalCenter
             text: root.vimMode
-              ? "hjkl move  i/a edit  x clear  w/b  0/$  gg/G  ^C copy  ^O VisiGrid  F11 width  Esc close"
-              : "Enter ↓  Tab →  F2 edit  Alt+= sum  Del clear  ^C copy  ^O VisiGrid  F11 width  Esc close"
+              ? "hjkl move  i/a edit  x clear  w/b  0/$  gg/G  ^C copy  ^O VisiGrid  F11 width  F12 vim off  Esc close"
+              : "Enter ↓  Tab →  F2 edit  Alt+= sum  Del clear  ^C copy  ^O VisiGrid  F11 width  F12 vim  Esc close"
             color: root.fgDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

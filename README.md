@@ -59,6 +59,7 @@ hl.layer_rule({ match = { namespace = "visigrid-scratch" }, animation = "slide t
 | `Ctrl+C` / `Ctrl+Shift+C` | copy the cell's value / its formula |
 | `Ctrl+O` | save and open the sheet in the VisiGrid app |
 | `F11` | toggle between full width and a fitted sheet |
+| `F12` | toggle vim mode |
 | `Esc` | cancel the edit, or close the overlay |
 
 Formulas start with `=`. Mouse: click selects, double-click edits, wheel scrolls.
@@ -113,7 +114,8 @@ Optional settings file at `~/.config/visigrid/scratch.json` (hot-reloads):
 - `cols`: fixed column count (3–26), or `0` to fit as many 128px columns as
   the width holds.
 - `font`: font family override; empty uses the shell's menu font.
-- `vim`: `true` enables the vim bindings above.
+- `vim`: `true` enables the vim bindings above. `F12` flips it until the
+  shell restarts or the file changes.
 
 ## How it works
 

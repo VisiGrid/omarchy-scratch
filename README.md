@@ -38,6 +38,13 @@ o.bind("SUPER + CTRL + Q", "Scratch grid", "omarchy-shell shell toggle visigrid.
 Or keep the calculator and pick another key. The plugin can also be opened
 from any script with `omarchy-shell shell toggle visigrid.scratch`.
 
+For the drop-down slide, add a layer rule to `~/.config/hypr/hyprland.lua`
+(or any file it requires):
+
+```lua
+hl.layer_rule({ match = { namespace = "visigrid-scratch" }, animation = "slide top" })
+```
+
 ## Usage
 
 | Key | Action |
@@ -64,15 +71,17 @@ Optional settings file at `~/.config/visigrid/scratch.json` (hot-reloads):
 ```json
 {
   "theme": "phosphor",
-  "rows": 20,
-  "cols": 10,
+  "rows": 15,
+  "cols": 0,
   "font": ""
 }
 ```
 
 - `theme`: `phosphor` (VisiCalc green, the default) or `system` (follows your
   Omarchy theme).
-- `rows`, `cols`: visible grid size (5–60 rows, 3–26 columns).
+- `rows`: visible rows (5–60). The sheet is always full width.
+- `cols`: fixed column count (3–26), or `0` to fit as many 128px columns as
+  the screen holds.
 - `font`: font family override; empty uses the shell's menu font.
 
 ## How it works

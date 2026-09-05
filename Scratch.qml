@@ -24,8 +24,9 @@ Item {
   property string settingsPath: home + "/.config/visigrid/scratch.json"
   property string sheetPath: home + "/.local/state/visigrid/scratch.sheet"
   property string themeName: "phosphor"   // "phosphor" | "system"
-  property int rows: 20
-  property int cols: 10
+  property int rows: 15
+  property int colsSetting: 0             // 0 = fill the screen width
+  readonly property int cols: colsSetting > 0 ? colsSetting : Math.max(3, Math.floor((panel.width - headW) / baseCellW))
   property string fontOverride: ""
 
   // ---- engine -------------------------------------------------------------
@@ -73,7 +74,8 @@ Item {
   readonly property int borderW: 0
   readonly property var borderSpec: Border.none()
 
-  readonly property int cellW: Style.space(128)
+  readonly property int baseCellW: Style.space(128)
+  readonly property int cellW: Math.floor((panel.width - headW) / cols)
   readonly property int cellH: Style.space(32)
   readonly property int headW: Style.space(56)
   readonly property int pad: 0
@@ -82,7 +84,7 @@ Item {
   readonly property int cellFont: Style.font.title
   readonly property int headFont: Style.font.body
   readonly property int edgePad: Style.space(10)
-  readonly property int cardW: Math.min(headW + cols * cellW + pad * 2 + borderW * 2, panel.width - Style.gapsOut * 2)
+  readonly property int cardW: panel.width
   readonly property int cardH: Math.min(barH + gap + cellH * (rows + 1) + gap + cellH + pad * 2 + borderW * 2, panel.height - Style.gapsOut * 2)
 
   // ---- shell contract ---------------------------------------------------------
@@ -115,15 +117,17 @@ Item {
     root.themeName = s.theme === "system" ? "system" : "phosphor"
     root.fontOverride = typeof s.font === "string" ? s.font : ""
     var r = parseInt(s.rows), c = parseInt(s.cols)
-    var nr = isFinite(r) ? Math.max(5, Math.min(60, r)) : 20
-    var nc = isFinite(c) ? Math.max(3, Math.min(26, c)) : 10
-    if (nr !== root.rows || nc !== root.cols) {
-      root.rows = nr
-      root.cols = nc
-      root.grid = Grid.emptyGrid(nr, nc)
-      root.gridVersion++
-      root.refresh()
-    }
+    root.rows = isFinite(r) ? Math.max(5, Math.min(60, r)) : 15
+    root.colsSetting = isFinite(c) && c > 0 ? Math.max(3, Math.min(26, c)) : 0
+  }
+
+  onRowsChanged: root.resizeGrid()
+  onColsChanged: root.resizeGrid()
+
+  function resizeGrid() {
+    root.grid = Grid.emptyGrid(root.rows, root.cols)
+    root.gridVersion++
+    root.refresh()
   }
 
   // ---- engine lifecycle -----------------------------------------------------------
@@ -312,7 +316,7 @@ Item {
 
   function engineStatusText() {
     switch (root.engineState) {
-    case "ready": return "vgrid ready" + (root.revision >= 0 ? " · rev " + root.revision : "")
+    case "ready": return ""
     case "starting": return "starting vgrid…"
     case "retrying": return "engine stopped, retrying…"
     case "missing": return "vgrid not found — install visigrid-bin (AUR) or see visigrid.app"

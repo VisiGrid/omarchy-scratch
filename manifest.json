@@ -1,0 +1,12 @@
+{
+  "schemaVersion": 1,
+  "id": "visigrid.scratch",
+  "name": "VisiGrid Scratch",
+  "version": "0.1.0",
+  "author": "VisiGrid",
+  "license": "MIT",
+  "description": "A persistent scratch spreadsheet that drops down over your desktop. Replaces the calculator: type numbers and formulas, it remembers them, and the real VisiGrid engine does the math.",
+  "kinds": ["overlay"],
+  "keepLoaded": true,
+  "entryPoints": { "overlay": "Scratch.qml" }
+}

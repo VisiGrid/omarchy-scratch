@@ -57,6 +57,7 @@ hl.layer_rule({ match = { namespace = "visigrid-scratch" }, animation = "slide t
 | `Delete` / `Backspace` | clear the active cell |
 | `Ctrl+C` / `Ctrl+Shift+C` | copy the cell's value / its formula |
 | `Ctrl+O` | save and open the sheet in the VisiGrid app |
+| `F11` | toggle between full width and a fitted sheet |
 | `Esc` | cancel the edit, or close the overlay |
 
 Formulas start with `=`. Mouse: click selects, double-click edits, wheel scrolls.
@@ -90,6 +91,7 @@ Optional settings file at `~/.config/visigrid/scratch.json` (hot-reloads):
   "theme": "phosphor",
   "rows": 15,
   "cols": 0,
+  "width": "full",
   "font": "",
   "vim": false
 }
@@ -97,9 +99,13 @@ Optional settings file at `~/.config/visigrid/scratch.json` (hot-reloads):
 
 - `theme`: `phosphor` (VisiCalc green, the default) or `system` (follows your
   Omarchy theme).
-- `rows`: visible rows (5–60). The sheet is always full width.
+- `rows`: visible rows (5–60).
+- `width`: `full` spans the monitor; `fit` is a centered sheet just wide
+  enough for `cols` columns (10 when `cols` is 0); `"60%"` or a pixel count
+  like `1200` gives a fixed width. Always centered and flush with the top.
+  `F11` flips between `full` and `fit` until the shell restarts.
 - `cols`: fixed column count (3–26), or `0` to fit as many 128px columns as
-  the screen holds.
+  the width holds.
 - `font`: font family override; empty uses the shell's menu font.
 - `vim`: `true` enables the vim bindings above.
 

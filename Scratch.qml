@@ -25,8 +25,11 @@ Item {
   property string sheetPath: home + "/.local/state/visigrid/scratch.sheet"
   property string themeName: "phosphor"   // "phosphor" | "system"
   property int rows: 15
-  property int colsSetting: 0             // 0 = fill the screen width
-  readonly property int cols: colsSetting > 0 ? colsSetting : Math.max(3, Math.floor((panel.width - headW) / baseCellW))
+  property int colsSetting: 0             // 0 = as many as the width holds
+  property string widthSetting: "full"    // "full" | "fit" | "60%" | pixels
+  property string widthOverride: ""       // F11 toggles full/fit for this session
+  readonly property string widthMode: widthOverride || widthSetting
+  readonly property int cols: colsSetting > 0 ? colsSetting : Math.max(3, Math.floor((cardW - headW) / baseCellW))
   property string fontOverride: ""
   property bool vimMode: false
   property string pendingKey: ""          // "g" while waiting for the second g
@@ -52,6 +55,9 @@ Item {
   property string queuedOps: ""
   property string inflightOps: ""
   property bool inspectDirty: false
+  property string inflightRange: ""
+  property int inflightRows: 0
+  property int inflightCols: 0
   readonly property int maxRows: 65536
   readonly property int maxCols: 256
 
@@ -77,7 +83,7 @@ Item {
   readonly property var borderSpec: Border.none()
 
   readonly property int baseCellW: Style.space(128)
-  readonly property int cellW: Math.floor((panel.width - headW) / cols)
+  readonly property int cellW: Math.floor((cardW - headW) / cols)
   readonly property int cellH: Style.space(32)
   readonly property int headW: Style.space(56)
   readonly property int pad: 0
@@ -86,7 +92,14 @@ Item {
   readonly property int cellFont: Style.font.title
   readonly property int headFont: Style.font.body
   readonly property int edgePad: Style.space(10)
-  readonly property int cardW: panel.width
+  readonly property int cardW: {
+    var w = root.widthMode, px
+    if (w === "fit") px = headW + (colsSetting > 0 ? colsSetting : 10) * baseCellW
+    else if (/^\d+%$/.test(w)) px = Math.round(panel.width * parseInt(w) / 100)
+    else if (/^\d+$/.test(w)) px = parseInt(w)
+    else px = panel.width
+    return Math.max(headW + 3 * baseCellW, Math.min(px, panel.width))
+  }
   readonly property int cardH: Math.min(barH + gap + cellH * (rows + 1) + gap + cellH + pad * 2 + borderW * 2, panel.height - Style.gapsOut * 2)
 
   // ---- shell contract ---------------------------------------------------------
@@ -122,6 +135,7 @@ Item {
     var r = parseInt(s.rows), c = parseInt(s.cols)
     root.rows = isFinite(r) ? Math.max(5, Math.min(60, r)) : 15
     root.colsSetting = isFinite(c) && c > 0 ? Math.max(3, Math.min(26, c)) : 0
+    root.widthSetting = typeof s.width === "string" || typeof s.width === "number" ? String(s.width).trim() : "full"
   }
 
   onRowsChanged: root.resizeGrid()
@@ -203,14 +217,24 @@ Item {
   }
 
   // ---- reads ---------------------------------------------------------------------------
+  function currentRange() {
+    return Grid.rangeRef(root.topRow, root.leftCol, root.rows, root.cols)
+  }
+
   function refresh() {
     if (!root.sessionId || !root.opened) return
     if (inspectProc.running) { root.inspectDirty = true; return }
+    root.inflightRange = root.currentRange()
+    root.inflightRows = root.rows
+    root.inflightCols = root.cols
     inspectProc.running = true
   }
 
   function onInspect(text) {
-    var parsed = Grid.parseRange(text, root.rows, root.cols)
+    // The viewport moved or resized while this inspect was running: its cells
+    // would land in the wrong places. Drop it and ask again.
+    if (root.inflightRange !== root.currentRange()) { root.inspectDirty = true; return }
+    var parsed = Grid.parseRange(text, root.inflightRows, root.inflightCols)
     if (!parsed.ok) return
     root.grid = parsed.grid
     root.revision = parsed.revision
@@ -399,6 +423,7 @@ Item {
       if (ctrl) root.select(0, 0); else root.select(root.activeRow, 0)
       return true
     case Qt.Key_F2: root.beginEdit(root.activeCell().raw, false); return true
+    case Qt.Key_F11: root.widthOverride = root.widthMode === "full" ? "fit" : "full"; return true
     case Qt.Key_Delete:
     case Qt.Key_Backspace: root.clearCell(); return true
     }
@@ -480,7 +505,7 @@ Item {
 
   Process {
     id: inspectProc
-    command: ["vgrid", "inspect", "--session", root.sessionId, "--json", Grid.rangeRef(root.topRow, root.leftCol, root.rows, root.cols)]
+    command: ["vgrid", "inspect", "--session", root.sessionId, "--json", root.inflightRange]
     environment: ({ "VISIGRID_SESSION_TOKEN": root.token })
     stdout: StdioCollector {
       waitForEnd: true
@@ -750,8 +775,8 @@ Item {
             anchors.leftMargin: root.edgePad
             anchors.verticalCenter: parent.verticalCenter
             text: root.vimMode
-              ? "hjkl move  i/a edit  x clear  w/b next/prev  0/$ row ends  gg/G top/bottom  ^C copy  ^O open in VisiGrid  Esc close"
-              : "Enter ↓  Tab →  F2 edit  Del clear  ^C copy  ^O open in VisiGrid  Esc close"
+              ? "hjkl move  i/a edit  x clear  w/b  0/$  gg/G  ^C copy  ^O VisiGrid  F11 width  Esc close"
+              : "Enter ↓  Tab →  F2 edit  Del clear  ^C copy  ^O VisiGrid  F11 width  Esc close"
             color: root.fgDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

@@ -69,15 +69,19 @@ Item {
   readonly property color borderColor: phosphor ? "#2e9e2e" : Color.menu.border
   readonly property color scrim:       phosphor ? Qt.rgba(0, 0, 0, 0.55) : Color.menu.scrim
   readonly property string fontFamily: fontOverride || Style.font.menuFamily
-  readonly property int borderW: Math.max(1, Style.space(2))
-  readonly property var borderSpec: phosphor ? Border.flat(borderColor, borderW) : Border.surfaceSpec("menu", "border", borderColor, borderW)
+  // Flush drop-down: no card border or padding, just a hairline under the sheet.
+  readonly property int borderW: 0
+  readonly property var borderSpec: Border.none()
 
-  readonly property int cellW: Style.space(96)
-  readonly property int cellH: Style.space(24)
-  readonly property int headW: Style.space(44)
-  readonly property int pad: Style.spacing.panelPadding
-  readonly property int gap: Style.spacing.sm
+  readonly property int cellW: Style.space(128)
+  readonly property int cellH: Style.space(32)
+  readonly property int headW: Style.space(56)
+  readonly property int pad: 0
+  readonly property int gap: 0
   readonly property int barH: cellH + Style.space(6)
+  readonly property int cellFont: Style.font.title
+  readonly property int headFont: Style.font.body
+  readonly property int edgePad: Style.space(10)
   readonly property int cardW: Math.min(headW + cols * cellW + pad * 2 + borderW * 2, panel.width - Style.gapsOut * 2)
   readonly property int cardH: Math.min(barH + gap + cellH * (rows + 1) + gap + cellH + pad * 2 + borderW * 2, panel.height - Style.gapsOut * 2)
 
@@ -461,10 +465,13 @@ Item {
       radius: Style.cornerRadius
       anchors.horizontalCenter: parent.horizontalCenter
       anchors.top: parent.top
-      anchors.topMargin: Style.gapsOut + Style.bar.sizeHorizontal
+      anchors.topMargin: 0
       color: root.bg
       borderSpec: root.borderSpec
       padding: root.pad
+
+      // Hairline along the bottom edge so the sheet reads as a surface.
+      Rectangle { anchors.bottom: parent.bottom; width: parent.width; height: 1; color: root.borderColor; z: 6 }
 
       MouseArea { anchors.fill: parent; onClicked: {} }
 
@@ -494,8 +501,8 @@ Item {
           color: root.barBg
           Row {
             anchors.fill: parent
-            anchors.leftMargin: Style.space(8)
-            anchors.rightMargin: Style.space(8)
+            anchors.leftMargin: root.edgePad
+            anchors.rightMargin: root.edgePad
             spacing: Style.space(10)
             Text {
               width: root.headW + Style.space(16)
@@ -556,7 +563,7 @@ Item {
                     text: Grid.colName(root.leftCol + index)
                     color: parent.active ? root.selFg : root.fgDim
                     font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
+                    font.pixelSize: root.headFont
                   }
                   Rectangle { anchors.right: parent.right; width: 1; height: parent.height; color: root.gridLine }
                 }
@@ -580,7 +587,7 @@ Item {
                     text: String(root.topRow + rowItem.index + 1)
                     color: rowItem.activeRow ? root.selFg : root.fgDim
                     font.family: root.fontFamily
-                    font.pixelSize: Style.font.bodySmall
+                    font.pixelSize: root.headFont
                   }
                   Rectangle { anchors.bottom: parent.bottom; height: 1; width: parent.width; color: root.gridLine }
                 }
@@ -600,13 +607,13 @@ Item {
 
                     Text {
                       anchors.fill: parent
-                      anchors.leftMargin: Style.space(6)
-                      anchors.rightMargin: Style.space(6)
+                      anchors.leftMargin: Style.space(8)
+                      anchors.rightMargin: Style.space(8)
                       visible: !(cellItem.active && root.editing)
                       text: cellItem.cell.display
                       color: cellItem.active ? root.selFg : (cellItem.error ? root.errFg : (cellItem.cell.formula ? root.fgBright : root.fg))
                       font.family: root.fontFamily
-                      font.pixelSize: Style.font.body
+                      font.pixelSize: root.cellFont
                       horizontalAlignment: cellItem.numeric ? Text.AlignRight : Text.AlignLeft
                       verticalAlignment: Text.AlignVCenter
                       elide: Text.ElideRight
@@ -649,14 +656,14 @@ Item {
             TextInput {
               id: editor
               anchors.fill: parent
-              anchors.leftMargin: Style.space(6)
-              anchors.rightMargin: Style.space(6)
+              anchors.leftMargin: Style.space(8)
+              anchors.rightMargin: Style.space(8)
               verticalAlignment: TextInput.AlignVCenter
               color: root.fgBright
               selectionColor: root.selBg
               selectedTextColor: root.selFg
               font.family: root.fontFamily
-              font.pixelSize: Style.font.body
+              font.pixelSize: root.cellFont
               selectByMouse: true
               clip: true
               Keys.onPressed: function(event) {
@@ -681,6 +688,7 @@ Item {
           height: root.cellH
           Text {
             anchors.left: parent.left
+            anchors.leftMargin: root.edgePad
             anchors.verticalCenter: parent.verticalCenter
             text: "Enter ↓  Tab →  F2 edit  Del clear  ^C copy  ^O open in VisiGrid  Esc close"
             color: root.fgDim
@@ -691,6 +699,7 @@ Item {
           }
           Text {
             anchors.right: parent.right
+            anchors.rightMargin: root.edgePad
             anchors.verticalCenter: parent.verticalCenter
             text: root.engineError && root.engineState === "ready" ? root.engineError : root.engineStatusText()
             color: root.engineState === "ready" && !root.engineError ? root.fgDim : (root.engineState === "missing" || root.engineError ? root.errFg : root.fgDim)

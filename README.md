@@ -6,7 +6,7 @@ everything is still there next time. The math is done by the real
 [VisiGrid](https://visigrid.app) engine running headless, so the whole
 function library works (`=SUM`, `=PMT`, `=VLOOKUP`, dates, text, …).
 
-![preview](preview.png)
+![Type a few numbers, close it, open it again: still there](demo.gif)
 
 ## Requirements
 

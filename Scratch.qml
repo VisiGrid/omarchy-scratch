@@ -37,14 +37,20 @@ Item {
   property string pendingKey: ""          // "g" while waiting for the second g
 
   // ---- engine -------------------------------------------------------------
-  readonly property string token: Grid.randomToken()
+  // The engine is a detached `vgrid serve` managed by engine.sh; the plugin
+  // adopts it across shell restarts via the pid and token kept beside the sheet.
+  property string token: ""
   property string sessionId: ""
+  property string enginePid: ""
   property string engineState: "starting"  // starting | ready | retrying | missing | paused
   property string engineError: ""
   property int restartDelay: 1000
   property bool suspended: false           // true while the real VisiGrid owns the file
   property bool launchAfterStop: false
   property int revision: -1
+  readonly property string engineScriptPath: Qt.resolvedUrl("engine.sh").toString().replace(/^file:\/\//, "")
+  property string ctlAction: "ensure"
+  property bool ctlGotSession: false
 
   // ---- viewport + cursor ---------------------------------------------------
   property int topRow: 0
@@ -123,12 +129,9 @@ Item {
   // ---- shell contract ---------------------------------------------------------
   function open(payloadJson) {
     root.opened = true
-    if (root.suspended) {
-      root.suspended = false
-      root.startEngine()
-    } else {
-      root.refresh()
-    }
+    root.suspended = false
+    if (!root.sessionId) root.startEngine()
+    else root.refresh()
     Qt.callLater(function() { keyCatcher.forceActiveFocus() })
   }
 
@@ -167,33 +170,22 @@ Item {
   }
 
   // ---- engine lifecycle -----------------------------------------------------------
-  // An empty or unreadable sheet (interrupted save) is moved aside, never fatal.
-  // The engine is exec'd so it is the process the shell tracks and signals:
-  // stopping it (Ctrl+O, shell exit via pdeathsig) must reach vgrid itself,
-  // never a wrapper that would leave the engine orphaned holding the file.
-  readonly property string engineScript:
-    'mkdir -p "$(dirname "$1")"\n' +
-    'command -v vgrid >/dev/null 2>&1 || { echo "MISSING vgrid"; exit 127; }\n' +
-    'if [ -e "$1" ] && ! vgrid peek "$1" >/dev/null 2>&1; then\n' +
-    '  mv -f "$1" "$1.unreadable-$(date +%s)"\n' +
-    '  echo "RECOVER moved unreadable sheet aside"\n' +
-    'fi\n' +
-    'if [ -s "$1" ]; then exec vgrid serve "$1" --autosave 5 --title Scratch; fi\n' +
-    'rm -f "$1"\n' +
-    'exec vgrid serve --new --save-as "$1" --autosave 5 --title Scratch\n'
-
   function startEngine() {
-    if (engineProc.running) return
-    root.sessionId = ""
-    root.engineState = "starting"
+    if (ctlProc.running) return
+    root.engineState = root.sessionId ? root.engineState : "starting"
     root.engineError = ""
-    engineProc.running = true
+    root.ctlAction = "ensure"
+    root.ctlGotSession = false
+    ctlProc.running = true
   }
 
-  function onEngineLine(line) {
-    var m = /READY session_id=([0-9a-f-]+)/.exec(line)
+  function onCtlLine(line) {
+    var m = /^SESSION=(\S+) TOKEN=(\S+) PID=(\d+)/.exec(line)
     if (m) {
       root.sessionId = m[1]
+      root.token = m[2]
+      root.enginePid = m[3]
+      root.ctlGotSession = true
       root.engineState = "ready"
       root.restartDelay = 1000
       root.flushOps()
@@ -201,40 +193,54 @@ Item {
       saveProc.running = true   // materialize the file right away
       return
     }
-    if (/^MISSING/.test(line)) {
-      root.engineState = "missing"
-      return
-    }
-    if (/^error/i.test(line)) root.engineError = line
+    if (/^MISSING/.test(line)) { root.engineState = "missing"; return }
+    if (/^FAILED/.test(line)) { root.engineError = line.replace(/^FAILED\s*/, ""); return }
   }
 
-  function onEngineExited(code) {
-    root.sessionId = ""
-    if (root.launchAfterStop) {
-      root.launchAfterStop = false
+  function onCtlExited(code) {
+    if (root.ctlAction === "stop") {
+      root.sessionId = ""
+      root.enginePid = ""
       root.engineState = "paused"
-      Quickshell.execDetached(["vgrid", "open", root.sheetPath])
-      root.close()
+      if (root.launchAfterStop) {
+        root.launchAfterStop = false
+        Quickshell.execDetached(["vgrid", "open", root.sheetPath])
+        root.close()
+      }
       return
     }
-    if (root.suspended) { root.engineState = "paused"; return }
-    if (code === 127 || root.engineState === "missing") { root.engineState = "missing"; return }
+    if (root.ctlGotSession) return
+    if (root.engineState === "missing" || code === 127) { root.engineState = "missing"; return }
+    root.sessionId = ""
     root.engineState = "retrying"
     restartTimer.interval = root.restartDelay
     root.restartDelay = Math.min(root.restartDelay * 2, 30000)
     restartTimer.restart()
   }
 
+  // A client command failed against the session: the engine is gone or the
+  // token changed. Re-run ensure, which adopts a live engine or starts one.
+  function engineLost(detail) {
+    if (!root.sessionId) return
+    root.sessionId = ""
+    root.engineState = "retrying"
+    root.engineError = detail || ""
+    restartTimer.interval = 300
+    restartTimer.restart()
+  }
+
+  function stopEngine() {
+    if (ctlProc.running) return
+    root.ctlAction = "stop"
+    ctlProc.running = true
+  }
+
   function openInVisiGrid() {
     if (root.editing) root.commitEdit(0, 0)
     root.suspended = true
     root.launchAfterStop = true
-    if (root.sessionId && root.engineState === "ready") {
-      saveProc.running = true            // save -> stop engine -> launch GUI
-    } else {
-      engineProc.running = false
-      if (!engineProc.running) root.onEngineExited(0)
-    }
+    if (root.sessionId && root.engineState === "ready") saveProc.running = true   // save -> stop -> launch
+    else root.stopEngine()
   }
 
   // ---- reads ---------------------------------------------------------------------------
@@ -724,7 +730,7 @@ Item {
     return false
   }
 
-  Component.onCompleted: initProc.running = true
+  Component.onCompleted: root.startEngine()
 
   // ---- files ---------------------------------------------------------------------------------
   FileView {
@@ -738,25 +744,12 @@ Item {
   }
 
   // ---- processes --------------------------------------------------------------------------
-  // Reap an engine left behind by a previous shell instance before starting
-  // ours, and WAIT for it to exit: it saves on SIGTERM, and two engines
-  // rewriting one file at the same time is how a sheet ends up empty.
   Process {
-    id: initProc
-    command: ["sh", "-c",
-      'pkill -f "vgrid serve .*/visigrid/scratch\\.sheet" 2>/dev/null; ' +
-      'for i in $(seq 1 100); do pgrep -f "vgrid serve .*/visigrid/scratch\\.sheet" >/dev/null || exit 0; sleep 0.1; done; ' +
-      'pkill -9 -f "vgrid serve .*/visigrid/scratch\\.sheet" 2>/dev/null; sleep 0.2; exit 0']
-    onExited: root.startEngine()
-  }
-
-  Process {
-    id: engineProc
-    command: ["setpriv", "--pdeathsig", "TERM", "sh", "-c", root.engineScript, "sh", root.sheetPath]
-    environment: ({ "VISIGRID_SESSION_TOKEN": root.token })
-    stdout: SplitParser { onRead: function(line) { root.onEngineLine(line) } }
-    stderr: SplitParser { onRead: function(line) { root.onEngineLine(line) } }
-    onExited: function(code, status) { root.onEngineExited(code) }
+    id: ctlProc
+    command: ["sh", root.engineScriptPath, root.sheetPath, root.ctlAction]
+    stdout: SplitParser { onRead: function(line) { root.onCtlLine(line) } }
+    stderr: SplitParser { onRead: function(line) { if (/error/i.test(line)) root.engineError = line } }
+    onExited: function(code, status) { root.onCtlExited(code) }
   }
 
   Timer {
@@ -782,6 +775,7 @@ Item {
     onExited: function(code, status) {
       root.inflightOps = ""
       root.engineError = code === 0 ? "" : (applyProc.lastStderr.split("\n").pop() || ("apply failed (" + code + ")"))
+      if (code !== 0 && /session|connect|refused|not found|unauthor/i.test(applyProc.lastStderr)) root.engineLost(root.engineError)
       root.flushOps()
       root.refresh()
     }
@@ -796,6 +790,7 @@ Item {
       onStreamFinished: root.onInspect(text)
     }
     onExited: function(code, status) {
+      if (code !== 0) { root.engineLost("engine not responding"); return }
       if (root.inspectDirty) { root.inspectDirty = false; root.refresh() }
     }
   }
@@ -805,10 +800,8 @@ Item {
     command: ["vgrid", "save", "--session", root.sessionId]
     environment: ({ "VISIGRID_SESSION_TOKEN": root.token })
     onExited: function(code, status) {
-      if (root.launchAfterStop) {
-        if (engineProc.running) engineProc.running = false
-        else root.onEngineExited(0)
-      }
+      if (code !== 0) root.engineLost("save failed")
+      if (root.launchAfterStop) root.stopEngine()
     }
   }
 
@@ -1085,7 +1078,8 @@ Item {
             visible: root.editing
             x: root.headW + (root.activeCol - root.leftCol) * root.cellW
             y: root.cellH + (root.activeRow - root.topRow) * root.cellH
-            width: Math.min(root.cellW * 2, gridArea.width - x)
+            // One cell wide; grows over the neighbours only when the text needs it.
+            width: Math.min(gridArea.width - x, Math.max(root.cellW, Math.ceil(editor.contentWidth) + Style.space(18)))
             height: root.cellH
             color: root.editorBg
             border.color: root.fgBright

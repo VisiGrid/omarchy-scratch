@@ -795,6 +795,33 @@ Item {
     }
   }
 
+  // Live refresh: while the overlay is open, poll the workbook revision (a
+  // tiny JSON) and only re-read the visible range when it changed. This is
+  // what makes edits from other clients (agents over MCP, the CLI) show up
+  // as they happen.
+  Timer {
+    id: livePoll
+    interval: 400
+    repeat: true
+    running: root.opened && root.sessionId !== "" && root.engineState === "ready"
+    onTriggered: if (!revProc.running && !inspectProc.running && !applyProc.running) revProc.running = true
+  }
+
+  Process {
+    id: revProc
+    command: ["vgrid", "inspect", "--session", root.sessionId, "--json", "workbook"]
+    environment: ({ "VISIGRID_SESSION_TOKEN": root.token })
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var rev = -1
+        try { rev = JSON.parse(text).revision } catch (e) { return }
+        if (typeof rev === "number" && rev !== root.revision) root.refresh()
+      }
+    }
+    onExited: function(code, status) { if (code !== 0) root.engineLost("engine not responding") }
+  }
+
   Process {
     id: saveProc
     command: ["vgrid", "save", "--session", root.sessionId]

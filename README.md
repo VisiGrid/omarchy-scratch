@@ -131,6 +131,12 @@ through `scratch.pid` and `scratch.token` (mode 0600) kept next to the sheet in
 `vgrid apply`; every refresh is one `vgrid inspect --json` of the visible range.
 The engine listens on loopback only. Nothing leaves your machine.
 
+While the overlay is open it polls the workbook revision and re-reads the
+visible range when it changes, so cells written by anything else, such as an
+agent over the VisiGrid MCP connector or `vgrid apply` from a script, appear
+as they land. The scratchpad is an ordinary VisiGrid session: `vgrid sessions`
+lists it and paired clients can write to it.
+
 `Ctrl+O` saves, stops the engine, and opens the sheet in the VisiGrid app; the
 next summon starts a fresh engine on whatever the app saved. Log output goes to
 `scratch-engine.log` in the same directory.

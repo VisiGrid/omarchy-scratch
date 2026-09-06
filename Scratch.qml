@@ -51,6 +51,14 @@ Item {
   property int leftCol: 0
   property int activeRow: 0
   property int activeCol: 0
+  // Selection: anchor..active, or an explicit region from Ctrl+A.
+  property int selAnchorRow: 0
+  property int selAnchorCol: 0
+  property var regionSel: null
+  readonly property int stripMaxRows: 1000
+  readonly property int rangeMaxCells: 20000
+  property var rangeCallback: null
+  property string rangeRequest: ""
   property var grid: Grid.emptyGrid(rows, cols)
   property int gridVersion: 0
   property bool editing: false
@@ -293,7 +301,8 @@ Item {
   }
 
   function clearCell() {
-    root.writeCell(root.activeRow, root.activeCol, "")
+    if (root.hasRange()) root.clearSelection()
+    else root.writeCell(root.activeRow, root.activeCol, "")
   }
 
   // ---- editing ---------------------------------------------------------------------------
@@ -301,7 +310,7 @@ Item {
     root.editing = true
     editor.text = initial
     editor.cursorPosition = atStart ? 0 : editor.text.length
-    Qt.callLater(function() { editor.forceActiveFocus() })
+    editor.forceActiveFocus()
   }
 
   function cancelEdit() {
@@ -404,14 +413,24 @@ Item {
 
   // ---- navigation -------------------------------------------------------------------
   function move(dr, dc) {
-    root.select(root.activeRow + dr, root.activeCol + dc)
+    root.moveCursor(root.activeRow + dr, root.activeCol + dc, false)
+  }
+
+  function moveExt(dr, dc, extend) {
+    root.moveCursor(root.activeRow + dr, root.activeCol + dc, extend)
   }
 
   function select(r, c) {
+    root.moveCursor(r, c, false)
+  }
+
+  function moveCursor(r, c, extend) {
     r = Math.max(0, Math.min(root.maxRows - 1, r))
     c = Math.max(0, Math.min(root.maxCols - 1, c))
+    root.regionSel = null
     root.activeRow = r
     root.activeCol = c
+    if (!extend) { root.selAnchorRow = r; root.selAnchorCol = c }
     var t = root.topRow, l = root.leftCol
     if (r < t) t = r
     if (r >= t + root.rows) t = r - root.rows + 1
@@ -427,6 +446,162 @@ Item {
     root.topRow = t
     root.leftCol = l
     root.refresh()
+  }
+
+  // ---- selection ------------------------------------------------------------------
+  function selBounds() {
+    if (root.regionSel) return root.regionSel
+    return {
+      r0: Math.min(root.selAnchorRow, root.activeRow), r1: Math.max(root.selAnchorRow, root.activeRow),
+      c0: Math.min(root.selAnchorCol, root.activeCol), c1: Math.max(root.selAnchorCol, root.activeCol)
+    }
+  }
+
+  function hasRange() {
+    var b = root.selBounds()
+    return b.r0 !== b.r1 || b.c0 !== b.c1
+  }
+
+  function filledAt(rr, cc) {
+    return rr >= 0 && cc >= 0 && rr < root.rows && cc < root.cols && root.cellAt(rr, cc).raw !== ""
+  }
+
+  // Excel's "current region": grow a box around the active cell until the
+  // ring around it is empty. Viewport coordinates; null if nothing is nearby.
+  function currentRegion() {
+    var r0 = root.activeRow - root.topRow, r1 = r0, c0 = root.activeCol - root.leftCol, c1 = c0
+    var grew = true, any = root.filledAt(r0, c0)
+    while (grew) {
+      grew = false
+      var up = false, down = false, left = false, right = false
+      for (var c = c0 - 1; c <= c1 + 1; c++) {
+        if (root.filledAt(r0 - 1, c)) { up = true; if (c < c0) left = true; if (c > c1) right = true }
+        if (root.filledAt(r1 + 1, c)) { down = true; if (c < c0) left = true; if (c > c1) right = true }
+      }
+      for (var r = r0; r <= r1; r++) {
+        if (root.filledAt(r, c0 - 1)) left = true
+        if (root.filledAt(r, c1 + 1)) right = true
+      }
+      if (up && r0 > 0) { r0--; grew = true }
+      if (down && r1 < root.rows - 1) { r1++; grew = true }
+      if (left && c0 > 0) { c0--; grew = true }
+      if (right && c1 < root.cols - 1) { c1++; grew = true }
+      if (grew) any = true
+    }
+    if (!any) return null
+    return { r0: root.topRow + r0, r1: root.topRow + r1, c0: root.leftCol + c0, c1: root.leftCol + c1 }
+  }
+
+  // Ctrl+A: the region around the cursor, then the whole visible grid.
+  function selectAll() {
+    var full = { r0: root.topRow, r1: root.topRow + root.rows - 1, c0: root.leftCol, c1: root.leftCol + root.cols - 1 }
+    var reg = root.currentRegion()
+    var cur = root.selBounds()
+    if (!reg || (cur.r0 === reg.r0 && cur.r1 === reg.r1 && cur.c0 === reg.c0 && cur.c1 === reg.c1)) reg = full
+    root.regionSel = reg
+  }
+
+  // One-shot range read from the engine for data that may be off screen.
+  function fetchRange(ref, rows, cols, cb) {
+    if (!root.sessionId || rangeProc.running) return false
+    root.rangeCallback = function(text) { cb(Grid.parseRange(text, rows, cols)) }
+    root.rangeRequest = ref
+    rangeProc.running = true
+    return true
+  }
+
+  // Ctrl+Arrow: end of the current run of filled cells, else the next filled
+  // cell, else the edge. Reads the whole row or column strip first.
+  function jump(dr, dc, extend) {
+    var vertical = dr !== 0
+    var n = vertical ? Math.min(root.stripMaxRows, root.maxRows) : root.maxCols
+    var ref = vertical
+      ? Grid.cellRef(0, root.activeCol) + ":" + Grid.cellRef(n - 1, root.activeCol)
+      : Grid.cellRef(root.activeRow, 0) + ":" + Grid.cellRef(root.activeRow, n - 1)
+    var d = vertical ? dr : dc
+    var i = vertical ? root.activeRow : root.activeCol
+    root.fetchRange(ref, vertical ? n : 1, vertical ? 1 : n, function(parsed) {
+      if (!parsed.ok) return
+      var filled = function(k) {
+        if (k < 0 || k >= n) return false
+        var cell = vertical ? parsed.grid[k][0] : parsed.grid[0][k]
+        return cell && cell.raw !== ""
+      }
+      var j = i
+      if (i + d < 0 || i + d >= n) return
+      if (filled(i) && filled(i + d)) {
+        while (filled(j + d)) j += d
+      } else {
+        j = i + d
+        while (j >= 0 && j < n && !filled(j)) j += d
+        if (j < 0 || j >= n) j = d < 0 ? 0 : n - 1
+      }
+      if (vertical) root.moveCursor(j, root.activeCol, extend)
+      else root.moveCursor(root.activeRow, j, extend)
+    })
+  }
+
+  function rangeToText(parsed, raw) {
+    var lines = []
+    for (var r = 0; r < parsed.grid.length; r++) {
+      var row = []
+      for (var c = 0; c < parsed.grid[r].length; c++) {
+        var cell = parsed.grid[r][c]
+        row.push(raw ? (cell.raw || cell.display) : cell.display)
+      }
+      lines.push(row.join("\t"))
+    }
+    return lines.join("\n")
+  }
+
+  function copySelection(raw) {
+    var b = root.selBounds()
+    var rows = b.r1 - b.r0 + 1, cols = b.c1 - b.c0 + 1
+    if (rows * cols === 1) { root.copyActive(raw); return }
+    if (rows * cols > root.rangeMaxCells) { root.engineError = "selection too large to copy"; return }
+    root.fetchRange(Grid.rangeRef(b.r0, b.c0, rows, cols), rows, cols, function(parsed) {
+      if (!parsed.ok) return
+      Quickshell.execDetached(["wl-copy", "--", root.rangeToText(parsed, raw)])
+    })
+  }
+
+  function clearSelection() {
+    var b = root.selBounds()
+    var rows = b.r1 - b.r0 + 1, cols = b.c1 - b.c0 + 1
+    if (rows * cols > root.rangeMaxCells) { root.engineError = "selection too large to clear"; return }
+    var ops = ""
+    for (var r = b.r0; r <= b.r1; r++) {
+      for (var c = b.c0; c <= b.c1; c++) {
+        root.setLocal(r, c, "")
+        ops += Grid.opFor(r, c, "") + "\n"
+      }
+    }
+    root.queuedOps += ops
+    root.flushOps()
+  }
+
+  function pasteFromClipboard() {
+    if (root.editing || pasteProc.running) return
+    pasteProc.running = true
+  }
+
+  function pasteText(text) {
+    var lines = text.replace(/\r/g, "").split("\n")
+    if (lines.length > 1 && lines[lines.length - 1] === "") lines.pop()
+    var ops = ""
+    for (var r = 0; r < lines.length && root.activeRow + r < root.maxRows; r++) {
+      var cells = lines[r].split("\t")
+      for (var c = 0; c < cells.length && root.activeCol + c < root.maxCols; c++) {
+        root.setLocal(root.activeRow + r, root.activeCol + c, cells[c])
+        ops += Grid.opFor(root.activeRow + r, root.activeCol + c, cells[c]) + "\n"
+      }
+    }
+    if (ops === "") return
+    root.queuedOps += ops
+    root.flushOps()
+    root.regionSel = { r0: root.activeRow, c0: root.activeCol,
+      r1: Math.min(root.maxRows - 1, root.activeRow + lines.length - 1),
+      c1: Math.min(root.maxCols - 1, root.activeCol + Math.max.apply(null, lines.map(function(l) { return l.split("\t").length })) - 1) }
   }
 
   function copyActive(raw) {
@@ -467,6 +642,10 @@ Item {
     case "j": root.move(1, 0); return true
     case "k": root.move(-1, 0); return true
     case "l": root.move(0, 1); return true
+    case "H": root.moveExt(0, -1, true); return true
+    case "J": root.moveExt(1, 0, true); return true
+    case "K": root.moveExt(-1, 0, true); return true
+    case "L": root.moveExt(0, 1, true); return true
     case "0": root.select(root.activeRow, 0); return true
     case "$":
       for (c = row.length - 1; c >= 0; c--) if (row[c].raw !== "") { root.select(root.activeRow, root.leftCol + c); break }
@@ -506,10 +685,10 @@ Item {
     root.pendingKey = ""
     switch (event.key) {
     case Qt.Key_Escape: root.close(); return true
-    case Qt.Key_Left: root.move(0, -1); return true
-    case Qt.Key_Right: root.move(0, 1); return true
-    case Qt.Key_Up: root.move(-1, 0); return true
-    case Qt.Key_Down: root.move(1, 0); return true
+    case Qt.Key_Left: if (ctrl) root.jump(0, -1, shift); else root.moveExt(0, -1, shift); return true
+    case Qt.Key_Right: if (ctrl) root.jump(0, 1, shift); else root.moveExt(0, 1, shift); return true
+    case Qt.Key_Up: if (ctrl) root.jump(-1, 0, shift); else root.moveExt(-1, 0, shift); return true
+    case Qt.Key_Down: if (ctrl) root.jump(1, 0, shift); else root.moveExt(1, 0, shift); return true
     case Qt.Key_Tab: root.move(0, 1); return true
     case Qt.Key_Backtab: root.move(0, -1); return true
     case Qt.Key_Return:
@@ -527,7 +706,9 @@ Item {
     }
     if (ctrl) {
       switch (event.key) {
-      case Qt.Key_C: root.copyActive(shift); return true
+      case Qt.Key_C: root.copySelection(shift); return true
+      case Qt.Key_V: root.pasteFromClipboard(); return true
+      case Qt.Key_A: root.selectAll(); return true
       case Qt.Key_O: root.openInVisiGrid(); return true
       case Qt.Key_R: root.refresh(); return true
       }
@@ -557,10 +738,15 @@ Item {
   }
 
   // ---- processes --------------------------------------------------------------------------
-  // Reap an engine left behind by a previous shell instance before starting ours.
+  // Reap an engine left behind by a previous shell instance before starting
+  // ours, and WAIT for it to exit: it saves on SIGTERM, and two engines
+  // rewriting one file at the same time is how a sheet ends up empty.
   Process {
     id: initProc
-    command: ["pkill", "-f", "vgrid serve .*/visigrid/scratch\\.sheet"]
+    command: ["sh", "-c",
+      'pkill -f "vgrid serve .*/visigrid/scratch\\.sheet" 2>/dev/null; ' +
+      'for i in $(seq 1 100); do pgrep -f "vgrid serve .*/visigrid/scratch\\.sheet" >/dev/null || exit 0; sleep 0.1; done; ' +
+      'pkill -9 -f "vgrid serve .*/visigrid/scratch\\.sheet" 2>/dev/null; sleep 0.2; exit 0']
     onExited: root.startEngine()
   }
 
@@ -626,6 +812,29 @@ Item {
     }
   }
 
+  Process {
+    id: rangeProc
+    command: ["vgrid", "inspect", "--session", root.sessionId, "--json", root.rangeRequest]
+    environment: ({ "VISIGRID_SESSION_TOKEN": root.token })
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: {
+        var cb = root.rangeCallback
+        root.rangeCallback = null
+        if (cb) cb(text)
+      }
+    }
+  }
+
+  Process {
+    id: pasteProc
+    command: ["wl-paste", "--no-newline", "--type", "text"]
+    stdout: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: root.pasteText(text)
+    }
+  }
+
   // ---- window -----------------------------------------------------------------------------------
   PanelWindow {
     id: panel
@@ -663,7 +872,17 @@ Item {
         focus: true
         Keys.priority: Keys.BeforeItem
         Keys.onPressed: function(event) {
-          if (root.editing) return
+          if (root.editing) {
+            // A fast typist can land a key here before the editor has focus.
+            // Forward it instead of dropping it.
+            if (event.text && event.text.length === 1 && event.text.charCodeAt(0) >= 32 && !(event.modifiers & Qt.ControlModifier)) {
+              editor.insert(editor.cursorPosition, event.text)
+              event.accepted = true
+            } else {
+              editor.forceActiveFocus()
+            }
+            return
+          }
           if (root.handleKey(event)) event.accepted = true
         }
       }
@@ -806,10 +1025,10 @@ Item {
 
                     MouseArea {
                       anchors.fill: parent
-                      onClicked: {
+                      onClicked: function(mouse) {
                         if (root.pointClick(root.topRow + rowItem.index, root.leftCol + cellItem.index)) return
                         if (root.editing) root.commitEdit(0, 0)
-                        root.select(root.topRow + rowItem.index, root.leftCol + cellItem.index)
+                        root.moveCursor(root.topRow + rowItem.index, root.leftCol + cellItem.index, (mouse.modifiers & Qt.ShiftModifier) !== 0)
                         keyCatcher.forceActiveFocus()
                       }
                       onDoubleClicked: {
@@ -821,6 +1040,30 @@ Item {
                 }
               }
             }
+          }
+
+          // Selected range (clipped to the viewport). The active cell stays inverse video.
+          Rectangle {
+            // One binding computes the clipped box so no property depends on a sibling.
+            readonly property var box: {
+              var b = root.regionSel || {
+                r0: Math.min(root.selAnchorRow, root.activeRow), r1: Math.max(root.selAnchorRow, root.activeRow),
+                c0: Math.min(root.selAnchorCol, root.activeCol), c1: Math.max(root.selAnchorCol, root.activeCol)
+              }
+              var r0 = Math.max(b.r0, root.topRow), r1 = Math.min(b.r1, root.topRow + root.rows - 1)
+              var c0 = Math.max(b.c0, root.leftCol), c1 = Math.min(b.c1, root.leftCol + root.cols - 1)
+              var isRange = b.r0 !== b.r1 || b.c0 !== b.c1
+              return { show: isRange && r1 >= r0 && c1 >= c0, r0: r0, r1: r1, c0: c0, c1: c1 }
+            }
+            visible: box.show
+            x: root.headW + (box.c0 - root.leftCol) * root.cellW
+            y: root.cellH + (box.r0 - root.topRow) * root.cellH
+            width: (box.c1 - box.c0 + 1) * root.cellW
+            height: (box.r1 - box.r0 + 1) * root.cellH
+            color: Util.alpha(root.selBg, 0.22)
+            border.color: root.selBg
+            border.width: 1
+            z: 3
           }
 
           // Outline of the reference being picked in point mode.
@@ -891,8 +1134,8 @@ Item {
             anchors.leftMargin: root.edgePad
             anchors.verticalCenter: parent.verticalCenter
             text: root.vimMode
-              ? "hjkl move  i/a edit  x clear  w/b  0/$  gg/G  ^C copy  ^O VisiGrid  F11 width  F12 vim off  Esc close"
-              : "Enter ↓  Tab →  F2 edit  Alt+= sum  Del clear  ^C copy  ^O VisiGrid  F11 width  F12 vim  Esc close"
+              ? "hjkl move  HJKL select  i/a edit  x clear  w/b  0/$  gg/G  ^arrows jump  ^A all  ^C/^V copy/paste  ^O VisiGrid  F11 F12  Esc close"
+              : "⇧arrows select  ^arrows jump  ^A all  F2 edit  Alt+= sum  Del clear  ^C/^V copy/paste  ^O VisiGrid  F11 F12  Esc close"
             color: root.fgDim
             font.family: root.fontFamily
             font.pixelSize: Style.font.caption

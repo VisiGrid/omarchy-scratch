@@ -54,9 +54,13 @@ hl.layer_rule({ match = { namespace = "visigrid-scratch" }, animation = "slide t
 | `Enter` / `Shift+Enter` | commit and move down / up |
 | `Tab` / `Shift+Tab` | commit and move right / left |
 | arrows, `PgUp`, `PgDn`, `Home`, `Ctrl+Home` | move; the grid scrolls when you hit an edge |
-| `Delete` / `Backspace` | clear the active cell |
+| `Shift+arrows`, `Shift+click` | extend the selection |
+| `Ctrl+arrows` / `Ctrl+Shift+arrows` | jump to the edge of the data / extend the selection there |
+| `Ctrl+A` | select the region around the cursor, again for the whole visible grid |
+| `Ctrl+V` | paste tab-separated text from the clipboard, starting at the active cell |
+| `Delete` / `Backspace` | clear the active cell or the selection |
 | `Alt+=` | AutoSum: `=SUM()` over the numbers above, else to the left |
-| `Ctrl+C` / `Ctrl+Shift+C` | copy the cell's value / its formula |
+| `Ctrl+C` / `Ctrl+Shift+C` | copy the cell or selection as values / as formulas (tab-separated) |
 | `Ctrl+O` | save and open the sheet in the VisiGrid app |
 | `F11` | toggle between full width and a fitted sheet |
 | `F12` | toggle vim mode |
@@ -77,6 +81,7 @@ own vim mode:
 | Key | Action |
 |-----|--------|
 | `h` `j` `k` `l` | move |
+| `H` `J` `K` `L` | extend the selection |
 | `0` / `$` | first column / last filled column in the row |
 | `w` / `b` | next / previous filled cell in the row |
 | `gg` / `G` | top-left / last filled row |

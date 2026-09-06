@@ -65,3 +65,20 @@ function randomToken() {
   for (var i = 0; i < 48; i++) s += "abcdefghijklmnopqrstuvwxyz0123456789".charAt(Math.floor(Math.random() * 36))
   return s
 }
+
+// Excel closes unbalanced parentheses on commit: "=sum(a1,b1" -> "=sum(a1,b1)".
+// Parentheses inside string literals are left alone.
+function balanceFormula(text) {
+  if (text.charAt(0) !== "=") return text
+  var depth = 0, inStr = false
+  for (var i = 0; i < text.length; i++) {
+    var ch = text.charAt(i)
+    if (ch === '"') inStr = !inStr
+    else if (!inStr) {
+      if (ch === "(") depth++
+      else if (ch === ")" && depth > 0) depth--
+    }
+  }
+  while (depth-- > 0) text += ")"
+  return text
+}

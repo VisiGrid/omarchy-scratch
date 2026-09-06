@@ -327,7 +327,7 @@ Item {
   }
 
   function commitEdit(dr, dc) {
-    var text = editor.text
+    var text = Grid.balanceFormula(editor.text)
     root.editing = false
     root.pointing = false
     editor.text = ""

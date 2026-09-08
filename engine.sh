@@ -23,6 +23,11 @@ TOKEN_FILE="$STATE/scratch.token"
 PID_FILE="$STATE/scratch.pid"
 LOG="$STATE/scratch-engine.log"
 BOOT_ID=$(cat /proc/sys/kernel/random/boot_id 2>/dev/null || echo unknown)
+# Clipboard bounds for the paste action: a hard cap on bytes read and a hard
+# deadline on the producer. 64 KiB is thousands of cells, far past what the
+# grid will place; two seconds is long past any real clipboard.
+PASTE_CAP=65536
+PASTE_DEADLINE=2
 mkdir -p "$STATE"
 umask 077
 
@@ -115,6 +120,35 @@ ensure)
   for _ in $(seq 1 50); do SID=$(session_for_pid "$PID"); [ -n "$SID" ] && break; sleep 0.1; done
   [ -n "$SID" ] || { echo "FAILED no session for pid $PID"; exit 1; }
   echo "SESSION=$SID TOKEN=$TOKEN PID=$PID"
+  ;;
+paste)
+  # Clipboard text for Ctrl+V, bounded BEFORE it reaches QML. The overlay
+  # used to collect wl-paste's whole stdout and only then apply its row and
+  # column limits, so a huge or never-ending clipboard producer could hold the
+  # helper open and grow the shell's memory without limit. Here the producer
+  # gets a hard deadline and at most one byte over the cap is ever read; an
+  # over-limit or stalled clipboard is reported on stderr with a distinct exit
+  # code and nothing is printed, so the overlay never parses partial data.
+  tmp=$(mktemp "$STATE/paste.XXXXXX") || exit 1
+  { timeout "$PASTE_DEADLINE" wl-paste --no-newline --type text 2>/dev/null; echo "$?" > "$tmp.rc"; } \
+    | head -c $((PASTE_CAP + 1)) > "$tmp"
+  rc=$(cat "$tmp.rc" 2>/dev/null || echo 1)
+  rm -f "$tmp.rc"
+  n=$(wc -c < "$tmp")
+  if [ "$n" -gt "$PASTE_CAP" ]; then
+    rm -f "$tmp"
+    echo "clipboard too large (limit $((PASTE_CAP / 1024)) KiB)" >&2
+    exit 3
+  fi
+  if [ "$rc" = 124 ]; then
+    rm -f "$tmp"
+    echo "clipboard read timed out" >&2
+    exit 4
+  fi
+  # Any other failure (wl-paste missing, nothing copied, not text) is an empty
+  # paste, which is what it always was.
+  cat "$tmp"
+  rm -f "$tmp"
   ;;
 stop)
   # Identity is re-checked immediately before each signal. If the engine has

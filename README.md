@@ -57,7 +57,7 @@ hl.layer_rule({ match = { namespace = "visigrid-scratch" }, animation = "slide t
 | `Shift+arrows`, `Shift+click` | extend the selection |
 | `Ctrl+arrows` / `Ctrl+Shift+arrows` | jump to the edge of the data / extend the selection there |
 | `Ctrl+A` | select the region around the cursor, again for the whole visible grid |
-| `Ctrl+V` | paste tab-separated text from the clipboard, starting at the active cell |
+| `Ctrl+V` | paste tab-separated text from the clipboard, starting at the active cell (capped at 64 KiB and two seconds; anything larger or slower is reported, not pasted) |
 | `Delete` / `Backspace` | clear the active cell or the selection |
 | `Alt+=` | AutoSum: `=SUM()` over the numbers above, else to the left |
 | `Ctrl+C` / `Ctrl+Shift+C` | copy the cell or selection as values / as formulas (tab-separated) |

@@ -846,12 +846,28 @@ Item {
     }
   }
 
+  // Clipboard text comes through engine.sh, which caps what it reads at
+  // 64 KiB and gives wl-paste a two-second deadline, so an oversized or
+  // stalled clipboard is reported in the status line rather than collected
+  // here in full and parsed. Only a clean exit carries text.
   Process {
     id: pasteProc
-    command: ["wl-paste", "--no-newline", "--type", "text"]
+    command: ["sh", root.engineScriptPath, root.sheetPath, "paste"]
+    property string output: ""
+    property string lastStderr: ""
     stdout: StdioCollector {
       waitForEnd: true
-      onStreamFinished: root.pasteText(text)
+      onStreamFinished: pasteProc.output = text
+    }
+    stderr: StdioCollector {
+      waitForEnd: true
+      onStreamFinished: pasteProc.lastStderr = text.trim()
+    }
+    onExited: function(code, status) {
+      var text = pasteProc.output
+      pasteProc.output = ""
+      if (code === 0) { root.pasteText(text); return }
+      root.engineError = pasteProc.lastStderr || ("clipboard read failed (" + code + ")")
     }
   }
 

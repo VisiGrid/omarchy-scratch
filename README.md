@@ -126,7 +126,8 @@ Optional settings file at `~/.config/visigrid/scratch.json` (hot-reloads):
 
 `engine.sh` starts one detached `vgrid serve` process that owns the sheet and
 autosaves it. It outlives shell restarts: the plugin adopts the running engine
-through `scratch.pid` and `scratch.token` (mode 0600) kept next to the sheet in
+through `scratch.pid` (pid plus process start time and boot id, so a reused
+pid is never mistaken for the engine) and `scratch.token` (mode 0600) kept next to the sheet in
 `~/.local/state/visigrid/`. Every edit is one JSONL operation piped to
 `vgrid apply`; every refresh is one `vgrid inspect --json` of the visible range.
 The engine listens on loopback only. Nothing leaves your machine.
@@ -148,7 +149,8 @@ omarchy plugin remove visigrid.scratch
 ```
 
 Your sheet stays in `~/.local/state/visigrid/` until you delete it. To stop a
-running engine after removal: `kill $(cat ~/.local/state/visigrid/scratch.pid)`.
+running engine after removal: `kill $(cut -d" " -f1 ~/.local/state/visigrid/scratch.pid)`
+(the file holds `pid start-time boot-id`, an identity record rather than a bare pid).
 
 ## License
 

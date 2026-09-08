@@ -42,7 +42,7 @@ record_pid() {
 
 # Print the recorded pid if, and only if, the record still names the same
 # process: same boot, same start time, and it is a vgrid binary.
-# A record without an identity (the pre-0.2 format, a bare pid) is reported
+# A record without an identity (the 0.1.0 format, a bare pid) is reported
 # only with LEGACY=1 set, so `ensure` can adopt and upgrade it once; `stop`
 # never signals on a bare pid.
 live_pid() {
@@ -63,6 +63,16 @@ session_for_pid() {
   vgrid sessions --json 2>/dev/null | jq -r --argjson p "$1" '.[] | select(.pid == $p) | .session_id' | head -1
 }
 
+# Was this live pid launched to serve THIS sheet? The only evidence a bare
+# 0.1.0 pid can offer: it passed nothing stronger than "alive, comm contains
+# vgrid", which any same-user vgrid process that inherited the number also
+# passes. The engine was exec'd with the sheet path in its arguments, so the
+# command line of the process now holding the pid says whether it is that
+# engine or a stranger. The session list cannot say: a --new --save-as
+# session reports no workbook path until its first save.
+serves_sheet() {
+  tr '\0' '\n' < "/proc/$1/cmdline" 2>/dev/null | grep -qxF -- "$SHEET"
+}
 case "$ACTION" in
 ensure)
   command -v vgrid >/dev/null 2>&1 || { echo "MISSING"; exit 127; }
@@ -71,9 +81,17 @@ ensure)
   TOKEN=$(cat "$TOKEN_FILE")
   PID=$(LEGACY=1 live_pid || true)
   if [ -n "$PID" ]; then
-    # Adopt: (re)write the identity record so a bare-pid file from an older
-    # version is upgraded, and a current one is refreshed.
-    record_pid "$PID" || PID=""
+    read -r _ st _ < "$PID_FILE" || st=""
+    if [ -z "$st" ] && ! serves_sheet "$PID"; then
+      # A bare 0.1.0 pid whose process was not launched on this sheet is not
+      # our engine, or no longer is. Forget it. Writing an identity record for
+      # it first would turn a reused pid into exactly what `stop` trusts.
+      PID=""
+    else
+      # Adopt: (re)write the identity record so a bare-pid file from an older
+      # version is upgraded, and a current one is refreshed.
+      record_pid "$PID" || PID=""
+    fi
   fi
   if [ -z "$PID" ]; then
     rm -f "$PID_FILE"
